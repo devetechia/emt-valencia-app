@@ -15,6 +15,8 @@ class DriveSim {
     this.onFinish = null;
     this._last = 0;
     this._warned = 0;
+    this.freeLook = false;   // true = el usuario ha movido el mapa con el ratón
+    this.view.onUserPan = () => { if (this.running) this.freeLook = true; };
     this._bind();
   }
 
@@ -31,6 +33,7 @@ class DriveSim {
       if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
       this.keys[k] = true;
       if (k === 'escape') this.stop();
+      if (k === 'c') this.freeLook = false;
     });
     window.addEventListener('keyup', e => { this.keys[e.key.toLowerCase()] = false; });
     window.addEventListener('blur', () => { this.keys = {}; this._resetMouse(); });
@@ -39,13 +42,14 @@ class DriveSim {
     c.addEventListener('contextmenu', e => e.preventDefault());
     c.addEventListener('pointerdown', e => {
       if (!this.running) return;
+      if (e.pointerType === 'mouse') return;   // PC: el ratón solo sirve para mover el mapa
       c.setPointerCapture(e.pointerId);
       if (e.button === 0) this.mouse.throttle = 1;
       if (e.button === 2) this.mouse.brake = 1;
       this.mouse.active = true;
       this._mouseMove(e);
     });
-    c.addEventListener('pointermove', e => { if (this.mouse.active) this._mouseMove(e); });
+    c.addEventListener('pointermove', e => { if (this.mouse.active && e.pointerType !== 'mouse') this._mouseMove(e); });
     const up = () => this._resetMouse();
     c.addEventListener('pointerup', up);
     c.addEventListener('pointercancel', up);
@@ -102,6 +106,7 @@ class DriveSim {
     this.view.overlayStops = this.stops;
     this.view.nextStopOrder = 0;
     this.view.bus = { x: this.x, y: this.y, angle: this.angle };
+    this.freeLook = false;
     this.view.centerOn(this.x, this.y, 2.4);
     this.view.dirty = true;
 
@@ -143,6 +148,7 @@ class DriveSim {
     const keyBrake = (k['arrowdown'] || k['s']) ? 1 : 0;
     const keySteer = ((k['arrowright'] || k['d']) ? 1 : 0) - ((k['arrowleft'] || k['a']) ? 1 : 0);
 
+    if (keyThrottle || keyBrake || keySteer) this.freeLook = false;
     let throttle = Math.max(keyThrottle, this.mouse.throttle);
     let brake = Math.max(keyBrake, this.mouse.brake);
     let steer = keySteer || this.mouse.steer;
@@ -274,6 +280,7 @@ class DriveSim {
   _render() {
     // encuadre suave tras el autobús
     const v = this.view;
+    if (this.freeLook) { v.dirty = true; return; }
     const { width: W, height: H } = this.canvas;
     const targetTx = W / 2 - this.x * v.scale;
     const targetTy = H / 2 - this.y * v.scale;

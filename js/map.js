@@ -241,6 +241,7 @@ class MapView {
         const dx = (e.clientX - drag.x) * k, dy = (e.clientY - drag.y) * k;
         if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
         this.tx += dx; this.ty += dy;
+        if (drag.moved && this.onUserPan) this.onUserPan();
         drag.x = e.clientX; drag.y = e.clientY;
         this.dirty = true;
       } else {
