@@ -5,6 +5,7 @@
 class DriveSim {
   constructor(canvas) {
     this.view = new MapView(canvas);
+    this.view.focus = true;   // solo ruta + calles colindantes
     this.canvas = canvas;
     this.running = false;
     this.keys = {};

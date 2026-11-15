@@ -1,5 +1,5 @@
 /* Service worker — rutas relativas: funciona igual en local y en GitHub Pages */
-const VERSION = 'emt-val-2026-11-15b';
+const VERSION = 'emt-val-2026-11-15c';
 
 const CORE = [
   './',

@@ -15,6 +15,8 @@ class MapView {
     this.bus = null;              // {x,y,angle}
     this.corridor = null;         // [{x,y}] ruta resaltada (modo conducción)
     this.hoverStop = null;
+    this.focus = false;           // modo enfoque (conducción): solo ruta + calles colindantes
+    this._corrSrc = null;
     this.dirty = true;
     this._raf = null;
     this.onStopClick = null;
@@ -53,14 +55,24 @@ class MapView {
     return { lines: lines.length, stops: stops.length, shapes: map.shapes.length };
   }
 
+  _isRed(c) {
+    // rojo de las líneas de bus impresas en el plano (#e0040b, #dd161a, #da002f…)
+    if (!c || c[0] !== '#' || c.length < 7) return false;
+    const r = parseInt(c.substr(1, 2), 16), g = parseInt(c.substr(3, 2), 16), b = parseInt(c.substr(5, 2), 16);
+    return r >= 0xc8 && g <= 0x40 && b <= 0x50;
+  }
+
   _buildOffscreen() {
     // el plano base es idéntico en todas las vistas: se comparte
-    if (MapView._cache && MapView._cacheKey === this.map.w + 'x' + this.map.h + ':' + this.map.shapes.length) {
-      this.offscreen = MapView._cache;
-      this.offScale = MapView._cacheDpr;
+    // (en modo enfoque se dibuja una versión limpia, sin las líneas rojas)
+    MapView._caches = MapView._caches || {};
+    const key = this.map.w + 'x' + this.map.h + ':' + this.map.shapes.length + (this.focus ? ':clean' : '');
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (MapView._caches[key]) {
+      this.offscreen = MapView._caches[key];
+      this.offScale = dpr;
       return;
     }
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const c = document.createElement('canvas');
     c.width = Math.round(this.world.w * dpr);
     c.height = Math.round(this.world.h * dpr);
@@ -72,6 +84,7 @@ class MapView {
     for (const s of this.map.shapes) {
       const hasFill = !!s.f, hasStroke = !!s.s;
       if (!hasFill && !hasStroke) continue;
+      if (this.focus && (this._isRed(s.f) || this._isRed(s.s))) continue;
       let p;
       try { p = new Path2D(s.d); } catch (e) { continue; }
       if (hasFill) { g.fillStyle = s.f; g.fill(p); }
@@ -81,9 +94,7 @@ class MapView {
         g.stroke(p);
       }
     }
-    MapView._cache = c;
-    MapView._cacheDpr = dpr;
-    MapView._cacheKey = this.map.w + 'x' + this.map.h + ':' + this.map.shapes.length;
+    MapView._caches[key] = c;
     this.offscreen = c;
     this.offScale = dpr;
   }
@@ -276,9 +287,13 @@ class MapView {
     // plano base (tx/ty están en píxeles device, igual que el canvas)
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(this.offscreen,
-      this.tx, this.ty,
-      this.mapW * this.scale, this.mapH * this.scale);
+    if (this.focus && this.corridor && this.corridor.length > 1) {
+      this._drawFocusBase(ctx);
+    } else {
+      ctx.drawImage(this.offscreen,
+        this.tx, this.ty,
+        this.mapW * this.scale, this.mapH * this.scale);
+    }
 
     ctx.save();
     ctx.translate(this.tx, this.ty);
@@ -334,6 +349,7 @@ class MapView {
   }
 
   _drawLabels(ctx) {
+    if (this.focus && this.corridor && this.corridor.length > 1) return this._drawFocusLabels(ctx);
     const s = this.scale;
     // filtrar por escala: a poco zoom solo etiquetas grandes
     const minSize = s < 0.30 ? 11 : s < 0.45 ? 8.5 : s < 0.7 ? 6.5 : 4.5;
@@ -360,12 +376,106 @@ class MapView {
     }
   }
 
+  /* ── modo enfoque (conducción) ── */
+  /** radio (unidades de mundo) alrededor de la ruta que se ve nítido */
+  _focusR() { return Math.max(100, 190 / this.scale); }
+
+  /** plano atenuado + franja nítida alrededor de la ruta */
+  _drawFocusBase(ctx) {
+    const W = this.canvas.width, H = this.canvas.height;
+    const mw = this.mapW * this.scale, mh = this.mapH * this.scale;
+    ctx.save();
+    ctx.globalAlpha = 0.22;
+    ctx.drawImage(this.offscreen, this.tx, this.ty, mw, mh);
+    ctx.restore();
+    if (!this._mask || this._mask.width !== W || this._mask.height !== H) {
+      this._mask = document.createElement('canvas');
+      this._mask.width = W; this._mask.height = H;
+    }
+    const m = this._mask.getContext('2d');
+    m.setTransform(1, 0, 0, 1, 0, 0);
+    m.globalCompositeOperation = 'source-over';
+    m.clearRect(0, 0, W, H);
+    m.setTransform(this.scale, 0, 0, this.scale, this.tx, this.ty);
+    m.lineJoin = 'round'; m.lineCap = 'round';
+    m.strokeStyle = '#fff';
+    m.lineWidth = this._focusR() * 2;
+    m.beginPath();
+    const pts = this.corridor;
+    const [x0, y0] = this.s2w(0, 0), [x1, y1] = this.s2w(W, H);
+    const pad = this._focusR() * 2;
+    let pen = false;
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      const vis = p[0] > x0 - pad && p[0] < x1 + pad && p[1] > y0 - pad && p[1] < y1 + pad;
+      if (vis) { if (!pen) { m.moveTo(p[0], p[1]); pen = true; } else m.lineTo(p[0], p[1]); }
+      else pen = false;
+    }
+    m.stroke();
+    m.setTransform(1, 0, 0, 1, 0, 0);
+    m.globalCompositeOperation = 'source-in';
+    m.imageSmoothingEnabled = true;
+    m.drawImage(this.offscreen, this.tx, this.ty, mw, mh);
+    ctx.drawImage(this._mask, 0, 0);
+  }
+
+  /** etiquetas candidatas: calles cerca de la ruta (se calcula una vez por ruta) */
+  _buildFocusLabels() {
+    const pts = this.corridor, CELL = 120, LIM = 120;
+    const grid = new Map();
+    for (const p of pts) {
+      const k = Math.floor(p[0] / CELL) + ',' + Math.floor(p[1] / CELL);
+      let a = grid.get(k); if (!a) grid.set(k, a = []); a.push(p);
+    }
+    const out = [];
+    for (const l of this.map.labels) {
+      const c = (l.c || '').toLowerCase();
+      // fuera números de línea (blancos / rojos / solo cifras) y textos diminutos
+      if (c === '#ffffff' || this._isRed(c) || /^[\d\s\-\/,.]+$/.test(l.t) || l.t.length < 4) continue;
+      const cx = Math.floor(l.x / CELL), cy = Math.floor(l.y / CELL);
+      let bd = Infinity;
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+        const a = grid.get((cx + i) + ',' + (cy + j)); if (!a) continue;
+        for (const p of a) { const d = Math.hypot(p[0] - l.x, p[1] - l.y); if (d < bd) bd = d; }
+      }
+      if (bd <= LIM) out.push({ ...l, d: bd });
+    }
+    out.sort((a, b) => a.d - b.d);   // primero las de la propia ruta
+    return out;
+  }
+
+  _drawFocusLabels(ctx) {
+    if (this._corrSrc !== this.corridor) { this._focusLabels = this._buildFocusLabels(); this._corrSrc = this.corridor; }
+    const s = this.scale;
+    const [x0, y0] = this.s2w(0, 0), [x1, y1] = this.s2w(this.canvas.width, this.canvas.height);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+    const placed = [];
+    for (const l of this._focusLabels) {
+      if (l.x < x0 - 60 || l.x > x1 + 60 || l.y < y0 - 30 || l.y > y1 + 30) continue;
+      const onRoute = l.d <= 38;
+      const fs = Math.max(l.s * (onRoute ? 1.15 : 1), 11 / s);
+      ctx.font = `${onRoute ? 700 : 500} ${fs}px 'Segoe UI',system-ui,sans-serif`;
+      const w = ctx.measureText(l.t).width, h = fs;
+      let hit = false;
+      for (const b of placed) {
+        if (Math.abs(b.x - l.x) < (b.w + w) / 2 + 1 && Math.abs(b.y - l.y) < (b.h + h) / 2) { hit = true; break; }
+      }
+      if (hit) continue;
+      placed.push({ x: l.x, y: l.y, w, h });
+      ctx.lineWidth = Math.max(3 / s, 1.4);
+      ctx.strokeStyle = 'rgba(255,255,255,.96)';
+      ctx.strokeText(l.t, l.x, l.y);
+      ctx.fillStyle = onRoute ? '#0a1f3d' : '#4a5563';
+      ctx.fillText(l.t, l.x, l.y);
+    }
+  }
+
   _drawStops(ctx) {
     const s = this.scale;
     const r = Math.max(3.4 / s, 2.2);
     const stops = this._visibleStops();
 
-    for (const st of stops) {
+    for (const st of (this.focus ? [] : stops)) {
       const ov = this.overlayStops.find(o => o.id === st.id);
       if (ov) continue; // ya dibujadas abajo con estado
       ctx.beginPath();
