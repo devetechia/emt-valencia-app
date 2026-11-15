@@ -1,0 +1,16 @@
+{
+  "name": "EMT Valencia - Mapa Interactivo",
+  "short_name": "EMT València",
+  "description": "Aplicación interactiva para estudiar el callejero de EMT Valencia con modos Estudio y Juego",
+  "start_url": "/emt-valencia-app/",
+  "display": "standalone",
+  "background_color": "#1a4a8c",
+  "theme_color": "#1a4a8c",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}
