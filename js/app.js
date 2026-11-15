@@ -103,8 +103,11 @@ function fitToPoints(pts) {
   // El Palmar, Vinalesa…) no tiene calles detrás: se recorta el encuadre
   // al plano ampliado para que el mapa no se encoja hasta desaparecer.
   const pad = Math.max(v.mapW, v.mapH) * 0.15;
-  x0 = Math.max(x0, -pad); y0 = Math.max(y0, -pad);
-  x1 = Math.min(x1, v.mapW + pad); y1 = Math.min(y1, v.mapH + pad);
+  // con mapa base fuera del plano se encuadra la ruta completa
+  if (!MapView.OUTSIDE_TILES || navigator.onLine === false) {
+    x0 = Math.max(x0, -pad); y0 = Math.max(y0, -pad);
+    x1 = Math.min(x1, v.mapW + pad); y1 = Math.min(y1, v.mapH + pad);
+  }
   if (x1 - x0 < 40 || y1 - y0 < 40) { v.fit(); return; }
   v.fitBox(x0, y0, x1, y1, 0.93);
 }

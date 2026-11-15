@@ -3,6 +3,29 @@
    ═══════════════════════════════════════════════════════════ */
 
 const PAGE_W = 1811.5;
+
+// Fuera de la página impresa (El Saler, Vinalesa, Alboraya…) el plano no tiene calles.
+// Si hay conexión, ahí se dibuja de fondo un mapa base (OpenStreetMap) alineado
+// con la misma transformación que usan las paradas. Poner a false para desactivarlo.
+const OUTSIDE_TILES = true;
+const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+// transformación lon/lat -> coordenadas del plano (data/transform.json)
+const TF = { a: 17359.546247415048, b: 78.7392809827416, c: 4181.591216120089,
+             d: 170.28469367737154, e: -21854.90286997449, f: 863407.8025524728 };
+const ll2w = (lon, lat) => [TF.a * lon + TF.b * lat + TF.c, TF.d * lon + TF.e * lat + TF.f];
+const w2ll = (x, y) => {
+  const det = TF.a * TF.e - TF.b * TF.d, X = x - TF.c, Y = y - TF.f;
+  return [(X * TF.e - TF.b * Y) / det, (TF.a * Y - TF.d * X) / det];
+};
+const tileLL = (z, x, y) => {
+  const n = 2 ** z;
+  return [x / n * 360 - 180, Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI];
+};
+const llTile = (z, lon, lat) => {
+  const n = 2 ** z, r = lat * Math.PI / 180;
+  return [Math.floor((lon + 180) / 360 * n), Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n)];
+};
+
 // recuadros de "ampliación" impresos encima del plano (x0,y0,x1,y1) y primer índice de su contenido
 const INSETS = [[1275, 21, 1788, 374], [717, 620, 959, 795]];
 const INSET_FROM = 14900;
@@ -20,6 +43,7 @@ class MapView {
     this.bus = null;              // {x,y,angle}
     this.corridor = null;         // [{x,y}] ruta resaltada (modo conducción)
     this.hoverStop = null;
+    (MapView._views = MapView._views || []).push(this);
     this.focus = false;           // modo enfoque (conducción): solo ruta + calles colindantes
     this._corrSrc = null;
     this.dirty = true;
@@ -337,6 +361,8 @@ class MapView {
     const fp = this._focusPts();
     if (fp) {
       this._drawFocusBase(ctx);
+    } else if (this.focus) {
+      this._drawWorld(ctx);
     } else {
       ctx.drawImage(this.offscreen,
         this.tx, this.ty,
@@ -385,6 +411,18 @@ class MapView {
 
     // autobús
     if (this.bus) this._drawBus(ctx);
+
+    // atribución del mapa base (obligatoria)
+    if (this.tilesShown) {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      const fs = 10 * this._dpr();
+      ctx.font = `${fs}px 'Segoe UI',system-ui,sans-serif`;
+      ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
+      ctx.fillStyle = 'rgba(255,255,255,.75)';
+      ctx.fillText('© colaboradores de OpenStreetMap (fuera del plano impreso)', this.canvas.width - 8, this.canvas.height - 6);
+      ctx.restore();
+    }
 
     // nombre de la parada bajo el cursor
     if (this.hoverStop && this.hoverStop.name) {
@@ -470,6 +508,69 @@ class MapView {
   }
 
   /* ── modo enfoque (conducción) ── */
+  /** mapa base (si hay) + plano impreso, en coordenadas de pantalla de g */
+  _drawWorld(g) {
+    g.save();
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    this.tilesShown = OUTSIDE_TILES && this._drawTiles(g);
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(this.offscreen, this.tx, this.ty, this.mapW * this.scale, this.mapH * this.scale);
+    g.restore();
+  }
+
+  /** teselas del mapa base, solo fuera de la página impresa. Devuelve true si dibujó alguna */
+  _drawTiles(g) {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+    const W = this.canvas.width, H = this.canvas.height;
+    const [wx0, wy0] = this.s2w(0, 0), [wx1, wy1] = this.s2w(W, H);
+    // ¿hay algo fuera de la página a la vista?
+    if (wx0 >= 0 && wy0 >= 0 && wx1 <= PAGE_W && wy1 <= this.mapH) return false;
+    let z = Math.round(Math.log2(24414 * this.scale));
+    z = Math.max(9, Math.min(17, z));
+    const corners = [[wx0, wy0], [wx1, wy0], [wx0, wy1], [wx1, wy1]].map(p => w2ll(p[0], p[1]));
+    let t0, t1;
+    for (;;) {
+      const lons = corners.map(c => c[0]), lats = corners.map(c => c[1]);
+      t0 = llTile(z, Math.min(...lons), Math.max(...lats));
+      t1 = llTile(z, Math.max(...lons), Math.min(...lats));
+      if ((t1[0] - t0[0] + 1) * (t1[1] - t0[1] + 1) <= 64 || z <= 9) break;
+      z--;
+    }
+    if ((t1[0] - t0[0] + 1) * (t1[1] - t0[1] + 1) > 120) return false;
+    MapView._tiles = MapView._tiles || new Map();
+    g.save();
+    g.translate(this.tx, this.ty); g.scale(this.scale, this.scale);
+    g.beginPath();
+    g.rect(wx0 - 1e4, wy0 - 1e4, (wx1 - wx0) + 2e4, (wy1 - wy0) + 2e4);
+    g.rect(0, 0, PAGE_W, this.mapH);
+    g.clip('evenodd');
+    g.imageSmoothingEnabled = true;
+    try { g.filter = 'grayscale(.75) brightness(1.06)'; } catch (e) {}
+    let drawn = 0;
+    for (let ty = t0[1]; ty <= t1[1]; ty++) for (let tx = t0[0]; tx <= t1[0]; tx++) {
+      const key = z + '/' + tx + '/' + ty;
+      let t = MapView._tiles.get(key);
+      if (!t) {
+        t = { img: new Image(), ok: false };
+        t.img.onload = () => { t.ok = true; this.dirty = true; if (MapView._views) MapView._views.forEach(v => v.dirty = true); };
+        t.img.onerror = () => { t.bad = true; };
+        t.img.src = TILE_URL.replace('{z}', z).replace('{x}', tx).replace('{y}', ty);
+        MapView._tiles.set(key, t);
+        if (MapView._tiles.size > 600) MapView._tiles.delete(MapView._tiles.keys().next().value);
+      }
+      if (!t.ok) continue;
+      const p00 = ll2w(...tileLL(z, tx, ty)), p10 = ll2w(...tileLL(z, tx + 1, ty)), p01 = ll2w(...tileLL(z, tx, ty + 1));
+      g.save();
+      g.transform((p10[0] - p00[0]) / 256, (p10[1] - p00[1]) / 256, (p01[0] - p00[0]) / 256, (p01[1] - p00[1]) / 256, p00[0], p00[1]);
+      g.drawImage(t.img, 0, 0, 256.6, 256.6);
+      g.restore();
+      drawn++;
+    }
+    g.restore();
+    return drawn > 0;
+  }
+
   /** puntos de la ruta sobre la que se enfoca (conducción o línea elegida) */
   _focusPts() {
     if (!this.focus) return null;
@@ -484,10 +585,9 @@ class MapView {
   /** plano atenuado + franja nítida alrededor de la ruta */
   _drawFocusBase(ctx) {
     const W = this.canvas.width, H = this.canvas.height;
-    const mw = this.mapW * this.scale, mh = this.mapH * this.scale;
     ctx.save();
     ctx.globalAlpha = 0.22;
-    ctx.drawImage(this.offscreen, this.tx, this.ty, mw, mh);
+    this._drawWorld(ctx);
     ctx.restore();
     if (!this._mask || this._mask.width !== W || this._mask.height !== H) {
       this._mask = document.createElement('canvas');
@@ -513,10 +613,19 @@ class MapView {
       else pen = false;
     }
     m.stroke();
+    // mundo completo (mapa base + plano) en un lienzo temporal y recortado con la franja
+    if (!this._tmp || this._tmp.width !== W || this._tmp.height !== H) {
+      this._tmp = document.createElement('canvas');
+      this._tmp.width = W; this._tmp.height = H;
+    }
+    const tg = this._tmp.getContext('2d');
+    tg.setTransform(1, 0, 0, 1, 0, 0);
+    tg.globalCompositeOperation = 'source-over';
+    tg.clearRect(0, 0, W, H);
+    this._drawWorld(tg);
     m.setTransform(1, 0, 0, 1, 0, 0);
     m.globalCompositeOperation = 'source-in';
-    m.imageSmoothingEnabled = true;
-    m.drawImage(this.offscreen, this.tx, this.ty, mw, mh);
+    m.drawImage(this._tmp, 0, 0);
     ctx.drawImage(this._mask, 0, 0);
   }
 
@@ -683,4 +792,5 @@ function x1safe(m) { return m.s2w(m.canvas.width, 0)[0] + 40 / m.scale; }
 function y0safe(m) { return m.s2w(0, 0)[1] - 40 / m.scale; }
 function y1safe(m) { return m.s2w(0, m.canvas.height)[1] + 40 / m.scale; }
 
+MapView.OUTSIDE_TILES = OUTSIDE_TILES;
 window.MapView = MapView;
