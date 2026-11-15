@@ -2,6 +2,11 @@
    map.js — Renderizado del plano vectorial de EMT + capas
    ═══════════════════════════════════════════════════════════ */
 
+const PAGE_W = 1811.5;
+// recuadros de "ampliación" impresos encima del plano (x0,y0,x1,y1) y primer índice de su contenido
+const INSETS = [[1275, 21, 1788, 374], [717, 620, 959, 795]];
+const INSET_FROM = 14900;
+
 class MapView {
   constructor(canvas) {
     this.canvas = canvas;
@@ -55,6 +60,31 @@ class MapView {
     return { lines: lines.length, stops: stops.length, shapes: map.shapes.length };
   }
 
+  /** rosa de los vientos y pictogramas junto al mar (borde derecho de la página) */
+  _isCompass(s, i) {
+    if (i < 7570 || i > 7810) return false;
+    const m = /^M(-?[\d.]+),(-?[\d.]+)/.exec(s.d);
+    return !!m && +m[1] > 1550 && +m[1] < PAGE_W + 5 && +m[2] > 850 && +m[2] < 1240;
+  }
+
+  /** contenido de los recuadros de ampliación (tapan el plano real) */
+  _inInset(s, i) {
+    if (i < INSET_FROM) return false;
+    const n = s.d.match(/-?\d+\.?\d*/g);
+    if (!n || n.length < 2) return false;
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (let k = 0; k + 1 < n.length; k += 2) {
+      const x = +n[k], y = +n[k + 1];
+      if (x < x0) x0 = x; if (x > x1) x1 = x;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    return INSETS.some(b => x0 >= b[0] - 2 && y0 >= b[1] - 2 && x1 <= b[2] + 2 && y1 <= b[3] + 2);
+  }
+
+  _labelInInset(l) {
+    return l.x > PAGE_W || INSETS.some(b => l.x >= b[0] && l.x <= b[2] && l.y >= b[1] && l.y <= b[3]);
+  }
+
   _isRed(c) {
     // rojo de las líneas de bus impresas en el plano (#e0040b, #dd161a, #da002f…)
     if (!c || c[0] !== '#' || c.length < 7) return false;
@@ -79,12 +109,18 @@ class MapView {
     const g = c.getContext('2d');
     g.scale(dpr, dpr);
     g.fillStyle = '#ffffff';
-    g.fillRect(0, 0, this.world.w, this.world.h);
+    g.fillRect(0, 0, this.focus ? PAGE_W : this.world.w, this.world.h);
+    if (this.focus) {
+      // fuera la leyenda impresa a la derecha de la página (x > 1811)
+      g.save();
+      g.beginPath(); g.rect(0, 0, PAGE_W, this.world.h); g.clip();
+    }
 
-    for (const s of this.map.shapes) {
+    for (let si = 0; si < this.map.shapes.length; si++) {
+      const s = this.map.shapes[si];
       const hasFill = !!s.f, hasStroke = !!s.s;
       if (!hasFill && !hasStroke) continue;
-      if (this.focus && (this._isRed(s.f) || this._isRed(s.s))) continue;
+      if (this.focus && (this._isRed(s.f) || this._isRed(s.s) || this._isCompass(s, si) || this._inInset(s, si))) continue;
       let p;
       try { p = new Path2D(s.d); } catch (e) { continue; }
       if (hasFill) { g.fillStyle = s.f; g.fill(p); }
@@ -94,6 +130,7 @@ class MapView {
         g.stroke(p);
       }
     }
+    if (this.focus) g.restore();
     MapView._caches[key] = c;
     this.offscreen = c;
     this.offScale = dpr;
@@ -116,7 +153,7 @@ class MapView {
 
   /** encaja el plano impreso (por defecto) */
   fit() {
-    this.fitBox(0, 0, this.mapW || this.world.w, this.mapH || this.world.h);
+    this.fitBox(0, 0, this.focus ? PAGE_W : (this.mapW || this.world.w), this.mapH || this.world.h);
   }
 
   zoomAt(factor, sx, sy) {
@@ -215,11 +252,21 @@ class MapView {
     });
   }
 
+  /** en modo enfoque, las paradas que no son de la ruta solo se ven con mucho zoom (y sin ruta de conducción) */
+  _showOtherStops() { return this.focus ? (!this.corridor && this.scale >= 1.8) : true; }
+
   _visibleStops() {
     const [x0, y0] = this.s2w(0, 0);
     const [x1, y1] = this.s2w(this.canvas.width, this.canvas.height);
     const pad = 30 / this.scale;
+    if (!this._showOtherStops()) return [];
     return this.stops.filter(s => s.x > x0 - pad && s.x < x1 + pad && s.y > y0 - pad && s.y < y1 + pad);
+  }
+
+  /** paradas con las que se puede interactuar: las de la línea elegida + (con zoom) el resto */
+  _hitStops() {
+    const r = this._visibleStops();
+    return this.overlayStops && this.overlayStops.length && !this.corridor ? r.concat(this.overlayStops) : r;
   }
 
   _updateHover() {
@@ -227,7 +274,7 @@ class MapView {
     const [wx, wy] = this.s2w(this._mouse.x, this._mouse.y);
     const rad = 14 / this.scale;
     let best = null, bd = rad;
-    for (const s of this._visibleStops()) {
+    for (const s of this._hitStops()) {
       const d = Math.hypot(s.x - wx, s.y - wy);
       if (d < bd) { bd = d; best = s; }
     }
@@ -239,7 +286,7 @@ class MapView {
     const [wx, wy] = this.s2w(sx, sy);
     const rad = 16 / this.scale;
     let best = null, bd = rad;
-    for (const s of this._visibleStops()) {
+    for (const s of this._hitStops()) {
       const d = Math.hypot(s.x - wx, s.y - wy);
       if (d < bd) { bd = d; best = s; }
     }
@@ -287,7 +334,8 @@ class MapView {
     // plano base (tx/ty están en píxeles device, igual que el canvas)
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    if (this.focus && this.corridor && this.corridor.length > 1) {
+    const fp = this._focusPts();
+    if (fp) {
       this._drawFocusBase(ctx);
     } else {
       ctx.drawImage(this.offscreen,
@@ -319,12 +367,14 @@ class MapView {
     if (this.overlay) {
       const o = this.overlay;
       ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      ctx.strokeStyle = 'rgba(255,255,255,.9)';
-      ctx.lineWidth = (o.width || 7) + 4;
+      const lw = Math.max(o.width || 7, 5 / this.scale);
+      ctx.strokeStyle = 'rgba(255,255,255,.95)';
+      ctx.lineWidth = lw + Math.max(4, 3 / this.scale);
       this._path(o.pts); ctx.stroke();
       ctx.strokeStyle = o.color || '#e2001a';
-      ctx.lineWidth = o.width || 7;
+      ctx.lineWidth = lw;
       this._path(o.pts); ctx.stroke();
+      this._drawArrows(ctx, o.pts, lw);
     }
 
     // etiquetas (solo las visibles, dinámicas para que queden nítidas)
@@ -335,6 +385,20 @@ class MapView {
 
     // autobús
     if (this.bus) this._drawBus(ctx);
+
+    // nombre de la parada bajo el cursor
+    if (this.hoverStop && this.hoverStop.name) {
+      const h = this.hoverStop, fs = 13 / this.scale;
+      ctx.font = `600 ${fs}px 'Segoe UI',system-ui,sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const w = ctx.measureText(h.name).width + 12 / this.scale, ph = 22 / this.scale;
+      const by = h.y - 18 / this.scale;
+      ctx.fillStyle = 'rgba(8,24,46,.94)';
+      this._roundRect(ctx, h.x - w / 2, by - ph / 2, w, ph, 5 / this.scale);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(h.name, h.x, by);
+    }
 
     ctx.restore();
   }
@@ -348,8 +412,32 @@ class MapView {
     for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
   }
 
+  /** flechas de sentido a lo largo de la ruta (separadas ~110 px en pantalla) */
+  _drawArrows(ctx, pts, lw) {
+    const gap = 110 / this.scale, sz = Math.max(lw * 0.9, 5 / this.scale);
+    const [x0, y0] = this.s2w(0, 0), [x1, y1] = this.s2w(this.canvas.width, this.canvas.height);
+    let acc = gap / 2;
+    ctx.fillStyle = '#fff';
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      const dx = b[0] - a[0], dy = b[1] - a[1], d = Math.hypot(dx, dy);
+      if (!d) continue;
+      acc += d;
+      if (acc < gap) continue;
+      acc = 0;
+      if (b[0] < x0 || b[0] > x1 || b[1] < y0 || b[1] > y1) continue;
+      const ang = Math.atan2(dy, dx);
+      ctx.save();
+      ctx.translate(b[0], b[1]); ctx.rotate(ang);
+      ctx.beginPath();
+      ctx.moveTo(sz * 0.7, 0); ctx.lineTo(-sz * 0.5, -sz * 0.55); ctx.lineTo(-sz * 0.5, sz * 0.55);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+  }
+
   _drawLabels(ctx) {
-    if (this.focus && this.corridor && this.corridor.length > 1) return this._drawFocusLabels(ctx);
+    if (this.focus && this._focusPts()) return this._drawFocusLabels(ctx);
     const s = this.scale;
     // filtrar por escala: a poco zoom solo etiquetas grandes
     const minSize = s < 0.30 ? 11 : s < 0.45 ? 8.5 : s < 0.7 ? 6.5 : 4.5;
@@ -360,7 +448,12 @@ class MapView {
 
     for (const l of this.map.labels) {
       if (l.s < minSize) continue;
+      if (this.focus) {
+        const lc = (l.c || '').toLowerCase();
+        if (lc === '#ffffff' || this._isRed(lc) || l.x > PAGE_W || /^[\d\s\-\/,.]+$/.test(l.t) || l.t.length < 4) continue;
+      }
       if (l.x < x0 - 60 || l.x > x1 + 60 || l.y < y0 - 30 || l.y > y1 + 30) continue;
+      if (this.focus && this._labelInInset(l)) continue;
       const fs = Math.max(l.s, 6.2 / s);
       ctx.font = `${l.s >= 9 ? '600' : '400'} ${fs}px 'Segoe UI',system-ui,sans-serif`;
       const col = l.c || '#1f1410';
@@ -377,6 +470,14 @@ class MapView {
   }
 
   /* ── modo enfoque (conducción) ── */
+  /** puntos de la ruta sobre la que se enfoca (conducción o línea elegida) */
+  _focusPts() {
+    if (!this.focus) return null;
+    const p = (this.corridor && this.corridor.length > 1) ? this.corridor
+      : (this.overlay && this.overlay.pts && this.overlay.pts.length > 1) ? this.overlay.pts : null;
+    return p;
+  }
+
   /** radio (unidades de mundo) alrededor de la ruta que se ve nítido */
   _focusR() { return Math.max(100, 190 / this.scale); }
 
@@ -401,7 +502,7 @@ class MapView {
     m.strokeStyle = '#fff';
     m.lineWidth = this._focusR() * 2;
     m.beginPath();
-    const pts = this.corridor;
+    const pts = this._focusPts();
     const [x0, y0] = this.s2w(0, 0), [x1, y1] = this.s2w(W, H);
     const pad = this._focusR() * 2;
     let pen = false;
@@ -421,7 +522,7 @@ class MapView {
 
   /** etiquetas candidatas: calles cerca de la ruta (se calcula una vez por ruta) */
   _buildFocusLabels() {
-    const pts = this.corridor, CELL = 120, LIM = 120;
+    const pts = this._focusPts(), CELL = 120, LIM = 120;
     const grid = new Map();
     for (const p of pts) {
       const k = Math.floor(p[0] / CELL) + ',' + Math.floor(p[1] / CELL);
@@ -438,14 +539,15 @@ class MapView {
         const a = grid.get((cx + i) + ',' + (cy + j)); if (!a) continue;
         for (const p of a) { const d = Math.hypot(p[0] - l.x, p[1] - l.y); if (d < bd) bd = d; }
       }
-      if (bd <= LIM) out.push({ ...l, d: bd });
+      if (bd <= LIM && !this._labelInInset(l)) out.push({ ...l, d: bd });
     }
     out.sort((a, b) => a.d - b.d);   // primero las de la propia ruta
     return out;
   }
 
   _drawFocusLabels(ctx) {
-    if (this._corrSrc !== this.corridor) { this._focusLabels = this._buildFocusLabels(); this._corrSrc = this.corridor; }
+    const fp = this._focusPts();
+    if (this._corrSrc !== fp) { this._focusLabels = this._buildFocusLabels(); this._corrSrc = fp; }
     const s = this.scale;
     const [x0, y0] = this.s2w(0, 0), [x1, y1] = this.s2w(this.canvas.width, this.canvas.height);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
@@ -475,7 +577,7 @@ class MapView {
     const r = Math.max(3.4 / s, 2.2);
     const stops = this._visibleStops();
 
-    for (const st of (this.focus ? [] : stops)) {
+    for (const st of (this._showOtherStops() ? stops : [])) {
       const ov = this.overlayStops.find(o => o.id === st.id);
       if (ov) continue; // ya dibujadas abajo con estado
       ctx.beginPath();
@@ -500,7 +602,8 @@ class MapView {
       ctx.strokeStyle = done ? '#04231a' : '#ffffff';
       ctx.stroke();
 
-      if (isNext || (s > 0.55 && o.name)) {
+      const isEnd = o.order === 0 || o.order === this.overlayStops.length - 1;
+      if (isNext || isEnd || (s > 1.3 && o.name)) {
         const fs = Math.max(11 / s, 9);
         ctx.font = `700 ${fs}px 'Segoe UI',sans-serif`;
         const label = (isNext ? '▸ ' : '') + (o.name || '');

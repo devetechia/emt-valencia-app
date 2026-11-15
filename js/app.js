@@ -26,6 +26,7 @@ function toast(msg, ms = 2600) {
 async function boot() {
   try {
     const v = new MapView($('#mapCanvas'));
+    v.focus = true;   // plano limpio: solo la línea elegida y lo esencial
     state.mapView = v;
     const info = await v.load('');
     state.lines = info.lines ? v.lines : [];
@@ -360,6 +361,34 @@ function wireUI() {
   $('#zoomIn').onclick = () => state.mapView.zoomAt(1.35, state.mapView.canvas.width / 2, state.mapView.canvas.height / 2);
   $('#zoomOut').onclick = () => state.mapView.zoomAt(1 / 1.35, state.mapView.canvas.width / 2, state.mapView.canvas.height / 2);
   $('#zoomFit').onclick = () => state.mapView.fit();
+
+  // atajos de teclado para portátil (solo en la vista Mapa y sin escribir en el buscador)
+  window.addEventListener('keydown', e => {
+    if (!$('#view-mapa').classList.contains('active')) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const v = state.mapView, typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName);
+    const cx = v.canvas.width / 2, cy = v.canvas.height / 2, step = 90 * v._dpr();
+    if (e.key === '/' && !typing) { e.preventDefault(); $('#lineSearch').focus(); return; }
+    if (e.key === 'Escape') {
+      if (typing) { document.activeElement.blur(); return; }
+      if (!$('#lineDetail').classList.contains('hidden')) $('#backToList').click();
+      $('#stopCard').classList.add('hidden');
+      return;
+    }
+    if (typing) return;
+    const k = e.key;
+    if (k === '+' || k === '=') v.zoomAt(1.3, cx, cy);
+    else if (k === '-' || k === '_') v.zoomAt(1 / 1.3, cx, cy);
+    else if (k === '0' || k.toLowerCase() === 'f') { if (state.currentLine && !$('#lineDetail').classList.contains('hidden')) fitToPoints(state.currentLine.variants[state.currentVariant].pts); else v.fit(); }
+    else if (k === 'ArrowLeft') v.tx += step;
+    else if (k === 'ArrowRight') v.tx -= step;
+    else if (k === 'ArrowUp') v.ty += step;
+    else if (k === 'ArrowDown') v.ty -= step;
+    else if (k === 'Tab' || k === 'Enter') return;
+    else return;
+    e.preventDefault();
+    v.dirty = true;
+  });
 
   $('#quizStart').addEventListener('click', startQuiz);
 
