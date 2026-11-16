@@ -117,24 +117,24 @@
     <aside class="panel">
       <div class="panel-head">
         <h2>Trazar ruta</h2>
-        <p class="mini">Dibuja el recorrido de una línea haciendo clic sobre las calles, de la primera a la última parada. Después la app lo compara con el real.</p>
+        <p class="mini">Elige una línea: el mapa te marca la primera y la última parada. Dibuja con el ratón el recorrido por las calles y la app lo compara con el real; después puedes ver tu ruta, la real o las dos.</p>
       </div>
       <div id="traceSetup">
         <label class="field"><span>Línea</span><select id="traceLine"></select></label>
         <label class="field"><span>Sentido</span><select id="traceVariant"></select></label>
         <label class="field"><span>Ayuda</span>
           <select id="traceHelp">
-            <option value="all">Con todas las paradas</option>
-            <option value="ends">Solo cabeceras (difícil)</option>
+            <option value="ends">Solo primera y última parada</option>
+            <option value="all">Con todas las paradas (fácil)</option>
           </select>
         </label>
         <button id="traceStart" class="primary">✏️ Empezar a trazar</button>
         <div class="controls-help">
           <h3>Cómo se usa</h3>
           <ul>
-            <li><b>Clic</b> en el mapa: añade un punto de tu trazado</li>
-            <li><b>Arrastrar</b>: mover el mapa · rueda: zoom</li>
-            <li><kbd>Ctrl</kbd>+<kbd>Z</kbd> deshacer · <kbd>Enter</kbd> comprobar · <kbd>Esc</kbd> salir</li>
+            <li><b>Mantén pulsado y arrastra</b> sobre las calles para dibujar a mano alzada (puedes levantar y seguir)</li>
+            <li>Para mover el mapa: <b>botón derecho</b> o <kbd>Espacio</kbd> + arrastrar · rueda: zoom</li>
+            <li><kbd>D</kbd> dibujar · <kbd>P</kbd> por puntos · <kbd>M</kbd> mover · <kbd>Ctrl</kbd>+<kbd>Z</kbd> deshacer · <kbd>Enter</kbd> comprobar · <kbd>Esc</kbd> salir</li>
           </ul>
         </div>
       </div>
@@ -143,12 +143,22 @@
         <div class="hud-row"><span>Sale de</span><b id="trFrom">—</b></div>
         <div class="hud-row"><span>Llega a</span><b id="trTo">—</b></div>
         <div class="hud-row"><span>Puntos</span><b id="trPts">0</b></div>
+        <div class="trace-tools" id="traceTools">
+          <button class="ghost tool active" data-tool="free" title="Dibujar a mano alzada (D)">✏️ Dibujar</button>
+          <button class="ghost tool" data-tool="poly" title="Marcar puntos con clic (P)">📍 Puntos</button>
+          <button class="ghost tool" data-tool="move" title="Mover el mapa (M)">✋ Mover</button>
+        </div>
         <div class="trace-btns">
           <button id="traceUndo" class="ghost">↶ Deshacer</button>
           <button id="traceClear" class="ghost">🗑 Borrar</button>
         </div>
         <button id="traceCheck" class="primary">✔ Comprobar mi trazado</button>
         <div id="traceResult" class="trace-result hidden"></div>
+        <div id="traceViewBtns" class="trace-tools hidden">
+          <button class="ghost tv active" data-tv="both">👁 Las dos</button>
+          <button class="ghost tv" data-tv="mine">Mi ruta</button>
+          <button class="ghost tv" data-tv="real">Ruta real</button>
+        </div>
         <button id="traceEnd" class="ghost">■ Terminar</button>
       </div>
     </aside>
@@ -159,7 +169,7 @@
         <button id="trZoomOut" title="Alejar">－</button>
         <button id="trFit" title="Ver la ruta">⤢</button>
       </div>
-      <div id="traceHint" class="hint">Haz clic sobre las calles por las que pasa la línea · arrastra para mover el mapa</div>
+      <div id="traceHint" class="hint">Dibuja a mano alzada el recorrido, de la primera a la última parada · botón derecho o Espacio para mover el mapa</div>
     </div>
   </section>
 

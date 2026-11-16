@@ -265,31 +265,72 @@ function runs(pts, oks) {
   return out;
 }
 
-function evaluateTrace(real, user, stops) {
+/** compara el recorrido real con los trazos del usuario (lista de {pts}) */
+function evaluateTrace(real, strokes, stops) {
   const CELL = TRACE_TOL * 2;
-  const rd = densify(real), ud = densify(user);
+  const rd = densify(real);
+  const uds = strokes.map(st => densify(st.pts));
+  const ud = uds.flat();
   const gu = buildGrid(ud, CELL), gr = buildGrid(rd, CELL);
   const rok = rd.map(p => minDist(p, gu, CELL) <= TRACE_TOL);
-  const uok = ud.map(p => minDist(p, gr, CELL) <= TRACE_TOL);
+  const userRuns = [];
+  let good = 0;
+  for (const pts of uds) {
+    const oks = pts.map(p => minDist(p, gr, CELL) <= TRACE_TOL);
+    good += oks.filter(Boolean).length;
+    userRuns.push(...runs(pts, oks));
+  }
   const cover = rok.filter(Boolean).length / rd.length;
-  const precision = uok.filter(Boolean).length / ud.length;
+  const precision = good / Math.max(1, ud.length);
   const missed = stops.filter(s => minDist([s.x, s.y], gu, CELL) > TRACE_TOL);
-  return { cover, precision, missed, real: runs(rd, rok), user: runs(ud, uok) };
+  return { cover, precision, missed, real: runs(rd, rok), user: userRuns, realPts: real };
 }
 
 function wireTrace() {
   const t = state.trace;
   const st = { line: null, variant: null };
+  t.hideOtherStops = true;
+  t.tool = 'free';
 
-  const refresh = () => {
-    $('#trPts').textContent = t.trace ? t.trace.length : 0;
+  const nPts = () => (t.trace || []).reduce((a, s) => a + s.pts.length, 0);
+  const refresh = () => { $('#trPts').textContent = nPts(); };
+  const clearResult = () => {
+    t.traceResult = null; t.traceView = 'both';
+    $('#traceResult').classList.add('hidden'); $('#traceViewBtns').classList.add('hidden');
+    $$('.tv').forEach(b => b.classList.toggle('active', b.dataset.tv === 'both'));
   };
-  const clearResult = () => { t.traceResult = null; $('#traceResult').classList.add('hidden'); };
+  const setTool = k => {
+    t.tool = k;
+    $$('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === k));
+    t.canvas.style.cursor = k === 'move' ? 'grab' : 'crosshair';
+  };
+  $$('.tool').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
+  $$('.tv').forEach(b => b.addEventListener('click', () => {
+    t.traceView = b.dataset.tv;
+    $$('.tv').forEach(x => x.classList.toggle('active', x === b));
+    t.dirty = true;
+  }));
 
-  t.onMapClick = (x, y) => {
+  // a mano alzada
+  t.onStroke = (ph, x, y) => {
     if (!st.line) return;
+    const last = () => t.trace[t.trace.length - 1];
+    if (ph === 'start') { if (t.traceResult) clearResult(); t.trace.push({ kind: 'free', pts: [[x, y]] }); }
+    else if (ph === 'move') {
+      const s = last(); if (!s) return;
+      const l = s.pts[s.pts.length - 1];
+      if (Math.hypot(x - l[0], y - l[1]) >= Math.max(4, 3 / t.scale)) s.pts.push([x, y]);
+    } else if (ph === 'end') { const s = last(); if (s && s.pts.length < 2) t.trace.pop(); }
+    else if (ph === 'cancel') t.trace.pop();
+    t.dirty = true; refresh();
+  };
+
+  // por puntos (clic)
+  t.onMapClick = (x, y) => {
+    if (!st.line || t.tool !== 'poly') return;
     if (t.traceResult) clearResult();
-    (t.trace = t.trace || []).push([x, y]);
+    const l = t.trace[t.trace.length - 1];
+    if (l && l.kind === 'poly') l.pts.push([x, y]); else t.trace.push({ kind: 'poly', pts: [[x, y]] });
     t.dirty = true; refresh();
   };
 
@@ -303,8 +344,8 @@ function wireTrace() {
     t.overlayStops = $('#traceHelp').value === 'ends'
       ? [stops[0], stops[stops.length - 1]].map((s, i) => ({ ...s, order: i, served: false }))
       : stops.map((s, i) => ({ ...s, order: i, served: false }));
-    t.nextStopOrder = -1;
-    t.trace = []; clearResult();
+    t.nextStopOrder = 0;   // la primera parada, resaltada en amarillo
+    t.trace = []; clearResult(); setTool('free');
     $('#traceSetup').classList.add('hidden'); $('#traceHud').classList.remove('hidden');
     $('#view-trazar').classList.add('focus-ui');
     $('#trLine').textContent = `${l.n} · ${l.name || ''}`;
@@ -317,16 +358,25 @@ function wireTrace() {
     t.dirty = true;
   });
 
-  const undo = () => { if (t.trace && t.trace.length) { if (t.traceResult) clearResult(); t.trace.pop(); t.dirty = true; refresh(); } };
+  const undo = () => {
+    const l = t.trace && t.trace[t.trace.length - 1];
+    if (!l) return;
+    if (t.traceResult) clearResult();
+    if (l.kind === 'poly' && l.pts.length > 1) l.pts.pop(); else t.trace.pop();
+    t.dirty = true; refresh();
+  };
   $('#traceUndo').addEventListener('click', undo);
   $('#traceClear').addEventListener('click', () => { t.trace = []; clearResult(); t.dirty = true; refresh(); });
 
   const check = () => {
     if (!st.line) return;
     const box = $('#traceResult');
-    if (!t.trace || t.trace.length < 2) { box.className = 'trace-result warn'; box.textContent = 'Marca al menos 2 puntos sobre el mapa.'; return; }
+    if (nPts() < 2) { box.className = 'trace-result warn'; box.textContent = 'Dibuja primero el recorrido sobre el mapa.'; return; }
     const r = evaluateTrace(st.variant.pts, t.trace, st.variant.stops);
-    t.traceResult = r; t.dirty = true;
+    r.color = st.line.color;
+    t.traceResult = r; t.traceView = 'both'; t.dirty = true;
+    $$('.tv').forEach(b => b.classList.toggle('active', b.dataset.tv === 'both'));
+    $('#traceViewBtns').classList.remove('hidden');
     const pc = Math.round(r.cover * 100), pp = Math.round(r.precision * 100);
     const verdict = pc >= 90 && pp >= 85 ? '¡Ruta correcta!' : pc >= 70 ? 'Casi: te falta algún tramo' : 'Todavía no: repasa el recorrido';
     const missed = r.missed.length
@@ -335,7 +385,7 @@ function wireTrace() {
     box.innerHTML = `<b>${verdict}</b>
       <div>Recorrido real cubierto: <b>${pc} %</b></div>
       <div>Tu trazado que va por la ruta: <b>${pp} %</b></div>
-      <div class="legend"><span class="lg g"></span> acertaste <span class="lg r"></span> te faltó <span class="lg b"></span> tu trazado</div>
+      <div class="legend"><span class="lg g"></span> acertaste <span class="lg r"></span> te faltó <span class="lg b"></span> tu trazado <span class="lg o"></span> te saliste</div>
       ${missed}`;
     toast(`${verdict} · cubres el ${pc} %`, 3500);
     box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -346,7 +396,7 @@ function wireTrace() {
     st.line = null; t.trace = null; clearResult(); t.overlayStops = [];
     $('#traceHud').classList.add('hidden'); $('#traceSetup').classList.remove('hidden');
     $('#view-trazar').classList.remove('focus-ui');
-    t.dirty = true; t.fit();
+    t.tool = null; t.dirty = true; t.fit();
   };
   $('#traceEnd').addEventListener('click', end);
 
@@ -359,13 +409,21 @@ function wireTrace() {
     t.fitBox(x0, y0, x1, y1, 0.9);
   };
 
+  const active = () => $('#view-trazar').classList.contains('active') && st.line;
   window.addEventListener('keydown', e => {
-    if (!$('#view-trazar').classList.contains('active') || !st.line) return;
+    if (!active()) return;
     if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName)) return;
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
+    const k = e.key.toLowerCase();
+    if (k === ' ') { e.preventDefault(); t._space = true; t.canvas.style.cursor = 'grab'; }
+    else if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); undo(); }
+    else if (e.ctrlKey || e.metaKey || e.altKey) return;
     else if (e.key === 'Enter') { e.preventDefault(); check(); }
     else if (e.key === 'Escape') end();
+    else if (k === 'd') setTool('free');
+    else if (k === 'p') setTool('poly');
+    else if (k === 'm') setTool('move');
   });
+  window.addEventListener('keyup', e => { if (e.key === ' ') { t._space = false; if (t.tool) t.canvas.style.cursor = t.tool === 'move' ? 'grab' : 'crosshair'; } });
 }
 
 /* ════════ VISTA CONDUCCIÓN ════════ */
