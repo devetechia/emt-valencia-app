@@ -1,1 +1,1 @@
-{"cx": [17359.546247415048, 78.7392809827416, 4181.591216120089], "cy": [170.28469367737154, -21854.90286997449, 863407.8025524728], "n": 11534, "alineados": 0.9923}
+{"cx": [17324.839509939953, 79.08522013721928, 4184.4188125013425], "cy": [167.65328534851386, -21854.18438350673, 863405.1433757686], "nota": "lon/lat -> coordenadas del plano: x = cx0*lon + cx1*lat + cx2; y = cy0*lon + cy1*lat + cy2. Ajuste por minimos cuadrados sobre las 1153 paradas (residuo mediano 0,04 u). Lo usan scripts/actualizar_datos.py y el mapa base de js/map.js (constante TF)."}

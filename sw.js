@@ -1,5 +1,5 @@
 /* Service worker — rutas relativas: funciona igual en local y en GitHub Pages */
-const VERSION = 'emt-val-2026-11-15s';
+const VERSION = 'emt-val-2026-11-15t';
 
 const CORE = [
   './',
@@ -17,6 +17,7 @@ const DATA = [
   './data/lines.json',
   './data/stops.json',
   './data/transform.json',
+  './data/meta.json',
 ];
 
 self.addEventListener('install', e => {

@@ -41,6 +41,13 @@ async function boot() {
     state.trace.focus = true;
     await state.trace.load('');
 
+    // versión de los datos (la escribe scripts/actualizar_datos.py)
+    fetch('data/meta.json').then(r => r.ok ? r.json() : null).then(m => {
+      if (!m) return;
+      const f = d => d && d.length === 8 ? `${d.slice(6)}-${d.slice(4, 6)}-${d.slice(0, 4)}` : d;
+      $('#dataInfo').textContent = `Datos: GTFS oficial de EMT · versión ${m.feed_version} · vigente del ${f(m.start)} al ${f(m.end)}. El plano base es de 2023 (solo orientativo).`;
+    }).catch(() => {});
+
     state.quiz = new Quiz(state.lines);
     buildLineList();
     buildDriveSelects();
