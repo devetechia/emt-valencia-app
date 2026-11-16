@@ -46,6 +46,9 @@ class MapView {
     this.corridor = null;         // [{x,y}] ruta resaltada (modo conducción)
     this.hoverStop = null;
     (MapView._views = MapView._views || []).push(this);
+    this.trace = null;            // trazo del usuario [[x,y]…] (modo Trazar)
+    this.traceResult = null;      // {real:[{pts,ok}], user:[{pts,ok}]}
+    this.onMapClick = null;
     this.focus = false;           // modo enfoque (conducción): solo ruta + calles colindantes
     this._corrSrc = null;
     this.dirty = true;
@@ -58,11 +61,12 @@ class MapView {
 
   /* ── datos ── */
   async load(base = '') {
-    const [map, lines, stops] = await Promise.all([
+    MapView._dataP = MapView._dataP || Promise.all([
       fetch(base + 'data/map.json').then(r => r.json()),
       fetch(base + 'data/lines.json').then(r => r.json()),
       fetch(base + 'data/stops.json').then(r => r.json()),
     ]);
+    const [map, lines, stops] = await MapView._dataP;
     this.map = map; this.lines = lines; this.stops = stops;
     this.mapW = map.w; this.mapH = map.h;
     this.world = { w: map.w, h: map.h };
@@ -318,6 +322,7 @@ class MapView {
       if (d < bd) { bd = d; best = s; }
     }
     if (best && this.onStopClick) this.onStopClick(best);
+    else if (this.onMapClick) this.onMapClick(wx, wy);
   }
 
   /* ── bucle de render ── */
@@ -406,6 +411,10 @@ class MapView {
       this._drawArrows(ctx, o.pts, lw);
     }
 
+    // modo Trazar: resultado de la comprobación y trazo del usuario
+    if (this.traceResult) this._drawTraceResult(ctx);
+    if (this.trace && this.trace.length) this._drawTrace(ctx);
+
     // etiquetas (solo las visibles, dinámicas para que queden nítidas)
     this._drawLabels(ctx);
 
@@ -451,6 +460,39 @@ class MapView {
     ctx.beginPath();
     ctx.moveTo(pts[0][0], pts[0][1]);
     for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  }
+
+  _drawTrace(ctx) {
+    const s = this.scale, pts = this.trace;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    if (pts.length > 1) {
+      ctx.strokeStyle = 'rgba(255,255,255,.95)';
+      ctx.lineWidth = Math.max(9, 7 / s);
+      this._path(pts); ctx.stroke();
+      ctx.strokeStyle = this.traceResult ? '#3b82f6' : '#00a3e0';
+      ctx.lineWidth = Math.max(5, 4 / s);
+      this._path(pts); ctx.stroke();
+    }
+    const r = Math.max(3.2, 4 / s);
+    pts.forEach((p, i) => {
+      ctx.beginPath(); ctx.arc(p[0], p[1], i === 0 ? r * 1.6 : r, 0, Math.PI * 2);
+      ctx.fillStyle = i === 0 ? '#ffd600' : '#fff'; ctx.fill();
+      ctx.lineWidth = Math.max(1.4, 1.5 / s); ctx.strokeStyle = '#0a1f3d'; ctx.stroke();
+    });
+  }
+
+  _drawTraceResult(ctx) {
+    const s = this.scale, R = this.traceResult;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    for (const seg of R.real) {
+      if (seg.pts.length < 2) continue;
+      ctx.setLineDash(seg.ok ? [] : [Math.max(10, 9 / s), Math.max(8, 7 / s)]);
+      ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = Math.max(12, 10 / s);
+      this._path(seg.pts); ctx.stroke();
+      ctx.strokeStyle = seg.ok ? '#12b76a' : '#ef4444'; ctx.lineWidth = Math.max(8, 6.5 / s);
+      this._path(seg.pts); ctx.stroke();
+    }
+    ctx.setLineDash([]);
   }
 
   /** flechas de sentido a lo largo de la ruta (separadas ~110 px en pantalla) */

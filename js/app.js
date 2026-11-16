@@ -7,7 +7,7 @@ const $$ = s => [...document.querySelectorAll(s)];
 
 const state = {
   lines: [], stops: [], quiz: null,
-  mapView: null, drive: null,
+  mapView: null, drive: null, trace: null,
   currentLine: null, currentVariant: 0,
   quizQs: [], quizIdx: 0, quizRight: 0,
 };
@@ -37,9 +37,15 @@ async function boot() {
     await state.drive.load('');
     wireDrive();
 
+    state.trace = new MapView($('#traceCanvas'));
+    state.trace.focus = true;
+    await state.trace.load('');
+
     state.quiz = new Quiz(state.lines);
     buildLineList();
     buildDriveSelects();
+    buildTraceSelects();
+    wireTrace();
     wireUI();
     toast(`Datos cargados · ${v.lines.length} líneas · ${v.stops.length} paradas`);
   } catch (e) {
@@ -192,6 +198,163 @@ function showStopCard(stop) {
         if (r2) { r2.click(); r2.scrollIntoView({ block: 'center' }); }
       }
     }));
+}
+
+/* ════════ VISTA TRAZAR ════════ */
+const TRACE_TOL = 30;   // tolerancia (unidades del plano, ~150 m) para dar por buena una zona del trazado
+
+function buildTraceSelects() {
+  const sel = $('#traceLine');
+  sel.innerHTML = state.lines.map(l => `<option value="${l.id}">${l.n} — ${esc(l.name || '')}</option>`).join('');
+  const fill = () => {
+    const l = state.lines.find(x => String(x.id) === sel.value) || state.lines[0];
+    $('#traceVariant').innerHTML = l.variants.map((v, i) => {
+      const a = v.stops[0]?.name || '?', b = v.stops[v.stops.length - 1]?.name || '?';
+      return `<option value="${i}">${esc(a)} → ${esc(b)} (${v.stops.length})</option>`;
+    }).join('');
+  };
+  sel.addEventListener('change', fill);
+  fill();
+}
+
+/** reparte una polilínea en puntos separados ~step unidades */
+function densify(pts, step = 8) {
+  const out = [];
+  for (let i = 1; i < pts.length; i++) {
+    const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+    const n = Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0) / step));
+    for (let k = 0; k < n; k++) out.push([x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n]);
+  }
+  if (pts.length) out.push(pts[pts.length - 1]);
+  return out;
+}
+
+function minDist(p, grid, cell) {
+  const cx = Math.floor(p[0] / cell), cy = Math.floor(p[1] / cell);
+  let best = Infinity;
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+    const a = grid.get((cx + i) + ',' + (cy + j)); if (!a) continue;
+    for (const q of a) { const d = Math.hypot(p[0] - q[0], p[1] - q[1]); if (d < best) best = d; }
+  }
+  return best;
+}
+
+function buildGrid(pts, cell) {
+  const g = new Map();
+  for (const p of pts) {
+    const k = Math.floor(p[0] / cell) + ',' + Math.floor(p[1] / cell);
+    let a = g.get(k); if (!a) g.set(k, a = []); a.push(p);
+  }
+  return g;
+}
+
+/** trozos consecutivos con el mismo estado ok */
+function runs(pts, oks) {
+  const out = []; let cur = null;
+  for (let i = 0; i < pts.length; i++) {
+    if (!cur || cur.ok !== oks[i]) { cur = { ok: oks[i], pts: cur ? [cur.pts[cur.pts.length - 1]] : [] }; out.push(cur); }
+    cur.pts.push(pts[i]);
+  }
+  return out;
+}
+
+function evaluateTrace(real, user, stops) {
+  const CELL = TRACE_TOL * 2;
+  const rd = densify(real), ud = densify(user);
+  const gu = buildGrid(ud, CELL), gr = buildGrid(rd, CELL);
+  const rok = rd.map(p => minDist(p, gu, CELL) <= TRACE_TOL);
+  const uok = ud.map(p => minDist(p, gr, CELL) <= TRACE_TOL);
+  const cover = rok.filter(Boolean).length / rd.length;
+  const precision = uok.filter(Boolean).length / ud.length;
+  const missed = stops.filter(s => minDist([s.x, s.y], gu, CELL) > TRACE_TOL);
+  return { cover, precision, missed, real: runs(rd, rok), user: runs(ud, uok) };
+}
+
+function wireTrace() {
+  const t = state.trace;
+  const st = { line: null, variant: null };
+
+  const refresh = () => {
+    $('#trPts').textContent = t.trace ? t.trace.length : 0;
+  };
+  const clearResult = () => { t.traceResult = null; $('#traceResult').classList.add('hidden'); };
+
+  t.onMapClick = (x, y) => {
+    if (!st.line) return;
+    if (t.traceResult) clearResult();
+    (t.trace = t.trace || []).push([x, y]);
+    t.dirty = true; refresh();
+  };
+
+  $('#traceStart').addEventListener('click', () => {
+    const l = state.lines.find(x => String(x.id) === $('#traceLine').value);
+    if (!l) return;
+    const v = l.variants[+($('#traceVariant').value || 0)] || l.variants[0];
+    st.line = l; st.variant = v;
+    const stops = v.stops;
+    t.overlay = null; t.corridor = null;
+    t.overlayStops = $('#traceHelp').value === 'ends'
+      ? [stops[0], stops[stops.length - 1]].map((s, i) => ({ ...s, order: i, served: false }))
+      : stops.map((s, i) => ({ ...s, order: i, served: false }));
+    t.nextStopOrder = -1;
+    t.trace = []; clearResult();
+    $('#traceSetup').classList.add('hidden'); $('#traceHud').classList.remove('hidden');
+    $('#trLine').textContent = `${l.n} · ${l.name || ''}`;
+    $('#trFrom').textContent = stops[0].name; $('#trTo').textContent = stops[stops.length - 1].name;
+    refresh();
+    // encuadre: zona de la ruta (sin entregar el trazado exacto)
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const [x, y] of v.pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    t.fitBox(x0, y0, x1, y1, 0.9);
+    t.dirty = true;
+  });
+
+  const undo = () => { if (t.trace && t.trace.length) { if (t.traceResult) clearResult(); t.trace.pop(); t.dirty = true; refresh(); } };
+  $('#traceUndo').addEventListener('click', undo);
+  $('#traceClear').addEventListener('click', () => { t.trace = []; clearResult(); t.dirty = true; refresh(); });
+
+  const check = () => {
+    if (!st.line) return;
+    const box = $('#traceResult');
+    if (!t.trace || t.trace.length < 2) { box.className = 'trace-result warn'; box.textContent = 'Marca al menos 2 puntos sobre el mapa.'; return; }
+    const r = evaluateTrace(st.variant.pts, t.trace, st.variant.stops);
+    t.traceResult = r; t.dirty = true;
+    const pc = Math.round(r.cover * 100), pp = Math.round(r.precision * 100);
+    const verdict = pc >= 90 && pp >= 85 ? '¡Ruta correcta!' : pc >= 70 ? 'Casi: te falta algún tramo' : 'Todavía no: repasa el recorrido';
+    const missed = r.missed.length
+      ? `<div class="miss">No pasaste cerca de: ${r.missed.slice(0, 8).map(s => esc(s.name)).join(', ')}${r.missed.length > 8 ? ` y ${r.missed.length - 8} más` : ''}</div>` : '';
+    box.className = 'trace-result ' + (pc >= 90 && pp >= 85 ? 'ok' : pc >= 70 ? 'mid' : 'bad');
+    box.innerHTML = `<b>${verdict}</b>
+      <div>Recorrido real cubierto: <b>${pc} %</b></div>
+      <div>Tu trazado que va por la ruta: <b>${pp} %</b></div>
+      <div class="legend"><span class="lg g"></span> acertaste <span class="lg r"></span> te faltó <span class="lg b"></span> tu trazado</div>
+      ${missed}`;
+  };
+  $('#traceCheck').addEventListener('click', check);
+
+  const end = () => {
+    st.line = null; t.trace = null; clearResult(); t.overlayStops = [];
+    $('#traceHud').classList.add('hidden'); $('#traceSetup').classList.remove('hidden');
+    t.dirty = true; t.fit();
+  };
+  $('#traceEnd').addEventListener('click', end);
+
+  $('#trZoomIn').onclick = () => t.zoomAt(1.35, t.canvas.width / 2, t.canvas.height / 2);
+  $('#trZoomOut').onclick = () => t.zoomAt(1 / 1.35, t.canvas.width / 2, t.canvas.height / 2);
+  $('#trFit').onclick = () => {
+    if (!st.variant) return t.fit();
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const [x, y] of st.variant.pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    t.fitBox(x0, y0, x1, y1, 0.9);
+  };
+
+  window.addEventListener('keydown', e => {
+    if (!$('#view-trazar').classList.contains('active') || !st.line) return;
+    if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName)) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
+    else if (e.key === 'Enter') { e.preventDefault(); check(); }
+    else if (e.key === 'Escape') end();
+  });
 }
 
 /* ════════ VISTA CONDUCCIÓN ════════ */
@@ -361,6 +524,7 @@ function wireUI() {
     setTimeout(() => {
       if (v === 'mapa') { state.mapView._resize(); state.mapView.dirty = true; }
       if (v === 'conduccion') { state.drive.view._resize(); state.drive.view.dirty = true; }
+      if (v === 'trazar') { state.trace._resize(); state.trace.dirty = true; }
     }, 40);
   }));
 
