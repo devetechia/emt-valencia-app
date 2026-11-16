@@ -69,6 +69,9 @@ function buildLineList(filter = '') {
   });
 }
 
+// Líneas que EMT rediseña en noviembre de 2026 (anuncio del Ayuntamiento, 28-09-2026): el GTFS vigente aún trae las antiguas
+const REDESIGN = { '8': '58', '10': '50', '11': '51' };
+
 function selectLine(id, row) {
   const l = state.lines.find(x => String(x.id) === String(id));
   if (!l) return;
@@ -127,6 +130,7 @@ function showLineDetail(l) {
       <span class="badge" style="background:${l.color}">${l.n}</span>
       <h3>${esc(l.name || '')}</h3>
     </div>
+    ${REDESIGN[l.n] ? `<div class="hintbar warn-note">⚠ EMT rediseña esta línea en noviembre de 2026 y pasará a ser la <b>${REDESIGN[l.n]}</b>. Aquí se muestra el recorrido del feed vigente (hasta el 09-12-2026); confírmalo con el material oficial.</div>` : ''}
     <div class="variant-tabs">${variants}</div>
     <ul class="stops" id="stopList"></ul>
     <div class="hintbar">Toca una parada del mapa para ver qué otras líneas la sirven.

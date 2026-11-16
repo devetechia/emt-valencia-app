@@ -9,9 +9,11 @@ const PAGE_W = 1811.5;
 // con la misma transformación que usan las paradas. Poner a false para desactivarlo.
 const OUTSIDE_TILES = true;
 const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-// transformación lon/lat -> coordenadas del plano (data/transform.json)
-const TF = { a: 17359.546247415048, b: 78.7392809827416, c: 4181.591216120089,
-             d: 170.28469367737154, e: -21854.90286997449, f: 863407.8025524728 };
+// transformación lon/lat -> coordenadas del plano. Es la que usan las paradas y los trazados guardados
+// (ajuste por mínimos cuadrados sobre las 1153 paradas: residuo mediano 0,04 u; data/transform.json es el
+// ajuste previo contra el PDF y queda ~40 u desplazado respecto a las paradas)
+const TF = { a: 17324.839509939953, b: 79.08522013721928, c: 4184.4188125013425,
+             d: 167.65328534851386, e: -21854.18438350673, f: 863405.1433757686 };
 const ll2w = (lon, lat) => [TF.a * lon + TF.b * lat + TF.c, TF.d * lon + TF.e * lat + TF.f];
 const w2ll = (x, y) => {
   const det = TF.a * TF.e - TF.b * TF.d, X = x - TF.c, Y = y - TF.f;

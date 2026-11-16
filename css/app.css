@@ -259,3 +259,6 @@ kbd{
 .auto-ctl{display:flex;gap:6px;margin:10px 0 4px}
 .auto-ctl button{flex:1;padding:6px 4px;font-size:12px}
 .auto-ctl .auto-sp.active{background:var(--accent,#e2001a);color:#fff;border-color:transparent}
+
+.data-info{margin:8px 0 0;font-size:11px;line-height:1.35;color:var(--muted)}
+.warn-note{background:rgba(255,176,32,.12);border:1px solid rgba(255,176,32,.4);color:#ffd27a;border-radius:8px;padding:8px 10px;margin:8px 0}
