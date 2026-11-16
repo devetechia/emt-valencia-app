@@ -72,6 +72,7 @@
           <select id="driveVariant"></select>
         </label>
         <button id="driveStart" class="primary">▶ Empezar conducción</button>
+        <button id="driveAuto" class="ghost" style="width:100%;margin-top:8px">🤖 Ver recorrido automático</button>
         <div class="controls-help">
           <h3>Controles</h3>
           <ul>
@@ -80,6 +81,7 @@
             <li><kbd>←</kbd><kbd>→</kbd>/<kbd>A</kbd><kbd>D</kbd> girar</li>
             <li>Ratón (PC): <b>arrastra</b> para mirar el mapa sin que el bus arranque; la cámara vuelve al bus al pulsar una tecla de conducción o <kbd>C</kbd></li>
             <li>Móvil: mantén el dedo para acelerar y muévelo a izq./dcha. para girar</li>
+            <li>Recorrido automático: <kbd>P</kbd> pausa · <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> velocidad ×1/×2/×4</li>
             <li>Rueda: zoom · <kbd>Esc</kbd> salir</li>
           </ul>
         </div>
@@ -92,6 +94,12 @@
         <div class="hud-row"><span>Desvíos</span><b id="hudDev">0</b></div>
         <div class="hud-row"><span>Velocidad</span><b id="hudSpeed">0</b></div>
         <div class="progress"><div id="hudBar" class="bar"></div></div>
+        <div id="autoCtl" class="auto-ctl hidden">
+          <button id="autoPause" class="ghost" title="Pausa (P)">⏸ Pausa</button>
+          <button class="ghost auto-sp active" data-sp="1" title="Velocidad normal (1)">1×</button>
+          <button class="ghost auto-sp" data-sp="2" title="Doble velocidad (2)">2×</button>
+          <button class="ghost auto-sp" data-sp="4" title="Velocidad ×4 (3)">4×</button>
+        </div>
         <button id="driveStop" class="ghost">■ Terminar</button>
       </div>
     </aside>

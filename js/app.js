@@ -219,6 +219,10 @@ function wireDrive() {
     $('#hudSpeed').textContent = h.speed + ' km/h';
     $('#hudBar').style.width = h.pct + '%';
     $('#hudDev').style.color = h.deviations > 0 ? 'var(--warn)' : 'var(--txt)';
+    if (h.auto) {
+      $('#autoPause').textContent = h.paused ? '▶ Seguir' : '⏸ Pausa';
+      $$('.auto-sp').forEach(b => b.classList.toggle('active', +b.dataset.sp === h.autoSpeed));
+    }
     const msg = $('#driveMsg');
     if (h.offRoute) { msg.className = 'drive-msg err'; msg.textContent = '⚠ Fuera del recorrido — vuelve al trazado azul'; }
     else if (!msg.classList.contains('warn')) { msg.className = 'drive-msg'; }
@@ -243,15 +247,20 @@ function wireDrive() {
     setTimeout(() => b.classList.add('hidden'), 5200);
   };
 
-  $('#driveStart').addEventListener('click', () => {
+  const begin = auto => {
     const l = state.lines.find(x => String(x.id) === $('#driveLine').value);
     if (!l) return;
     const vi = +($('#driveVariant').value || 0);
     $('#driveSetup').classList.add('hidden');
     $('#driveHud').classList.remove('hidden');
     $('#driveBanner').classList.add('hidden');
-    if (d.start(l, vi)) toast('Conduciendo línea ' + l.n);
-  });
+    $('#autoCtl').classList.toggle('hidden', !auto);
+    if (d.start(l, vi, { auto })) toast((auto ? 'Recorrido automático · línea ' : 'Conduciendo línea ') + l.n);
+  };
+  $('#driveStart').addEventListener('click', () => begin(false));
+  $('#driveAuto').addEventListener('click', () => begin(true));
+  $('#autoPause').addEventListener('click', () => d.setPaused(!d.paused));
+  $$('.auto-sp').forEach(b => b.addEventListener('click', () => d.setAutoSpeed(+b.dataset.sp)));
 
   $('#driveStop').addEventListener('click', endDrive);
   window.addEventListener('keydown', e => {

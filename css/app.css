@@ -254,3 +254,8 @@ kbd{
 
 /* portátil: atajos visibles en la barra de ayuda */
 .hint kbd{background:rgba(255,255,255,.14);border-radius:3px;padding:0 4px;font:inherit;font-size:11px}
+
+/* recorrido automático */
+.auto-ctl{display:flex;gap:6px;margin:10px 0 4px}
+.auto-ctl button{flex:1;padding:6px 4px;font-size:12px}
+.auto-ctl .auto-sp.active{background:var(--accent,#e2001a);color:#fff;border-color:transparent}

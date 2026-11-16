@@ -15,6 +15,9 @@ class DriveSim {
     this.onFinish = null;
     this._last = 0;
     this._warned = 0;
+    this.auto = false;       // recorrido automático (piloto automático)
+    this.paused = false;
+    this.autoSpeed = 1;
     this.freeLook = false;   // true = el usuario ha movido el mapa con el ratón
     this.view.onUserPan = () => { if (this.running) this.freeLook = true; };
     this._bind();
@@ -34,6 +37,12 @@ class DriveSim {
       this.keys[k] = true;
       if (k === 'escape') this.stop();
       if (k === 'c') this.freeLook = false;
+      if (this.auto) {
+        if (k === 'p' || k === ' ') this.setPaused(!this.paused);
+        if (k === '1') this.setAutoSpeed(1);
+        if (k === '2') this.setAutoSpeed(2);
+        if (k === '3') this.setAutoSpeed(4);
+      }
     });
     window.addEventListener('keyup', e => { this.keys[e.key.toLowerCase()] = false; });
     window.addEventListener('blur', () => { this.keys = {}; this._resetMouse(); });
@@ -42,6 +51,7 @@ class DriveSim {
     c.addEventListener('contextmenu', e => e.preventDefault());
     c.addEventListener('pointerdown', e => {
       if (!this.running) return;
+      if (this.auto) return;
       if (e.pointerType === 'mouse') return;   // PC: el ratón solo sirve para mover el mapa
       c.setPointerCapture(e.pointerId);
       if (e.button === 0) this.mouse.throttle = 1;
@@ -65,7 +75,12 @@ class DriveSim {
   _resetMouse() { this.mouse = { throttle: 0, brake: 0, steer: 0, active: false }; }
 
   /* ── ciclo de vida ── */
-  start(line, variantIdx) {
+  start(line, variantIdx, opts = {}) {
+    this.auto = !!opts.auto;
+    this.paused = false;
+    this.autoSpeed = 1;
+    this._dwell = 0;
+    this._lastServed = 0;
     this.line = line;
     this.variant = line.variants[variantIdx] || line.variants[0];
     const pts = this.variant.pts;
@@ -87,6 +102,11 @@ class DriveSim {
       s.ri = bi;
       s.rd = bd;
     }
+
+    // longitud acumulada del trazado (para el piloto automático)
+    this._cum = [0];
+    for (let i = 1; i < pts.length; i++) this._cum.push(this._cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    this._s = 0; this._seg = 0;
 
     this.x = pts[0][0]; this.y = pts[0][1];
     this.angle = Math.atan2(pts[1][1] - this.y, pts[1][0] - this.x);
@@ -113,13 +133,16 @@ class DriveSim {
     this.running = true;
     this._last = performance.now();
     this._loop();
-    this.onMessage?.('good', '¡Adelante! Sigue el trazado y para en cada parada.');
+    this.onMessage?.('good', this.auto
+      ? 'Recorrido automático: el bus hace el trayecto solo. P pausa · 1/2/3 velocidad · arrastra para mirar el mapa.'
+      : '¡Adelante! Sigue el trazado y para en cada parada.');
     this._hud();
     return true;
   }
 
   stop() {
     this.running = false;
+    this.auto = false;
     cancelAnimationFrame(this._raf);
     this.view.bus = null;
     this.view.corridor = null;
@@ -140,15 +163,71 @@ class DriveSim {
     this._raf = requestAnimationFrame(() => this._loop());
   }
 
-  /* ── física ── */
+  setPaused(p) { this.paused = !!p; this._hud(); }
+  setAutoSpeed(m) { this.autoSpeed = m; this._hud(); }
+
+  /** punto y rumbo sobre el trazado a una distancia s (unidades de mundo) desde el inicio */
+  _pointAt(s) {
+    const R = this.route, C = this._cum, n = R.length;
+    s = Math.max(0, Math.min(C[n - 1], s));
+    let i = this._seg || 0;
+    if (C[i] > s) i = 0;
+    while (i < n - 2 && C[i + 1] < s) i++;
+    this._seg = i;
+    const len = C[i + 1] - C[i] || 1, t = Math.max(0, Math.min(1, (s - C[i]) / len));
+    const ax = R[i][0], ay = R[i][1], bx = R[i + 1][0], by = R[i + 1][1];
+    return { x: ax + (bx - ax) * t, y: ay + (by - ay) * t, ang: Math.atan2(by - ay, bx - ax) };
+  }
+
+  /** piloto automático: el bus recorre el trazado "sobre raíles", frena en curvas y para en cada parada */
+  _autoMove(dt) {
+    const R = this.route, C = this._cum;
+    let hold = false;
+    if (this._dwell > 0) { this._dwell -= dt; hold = true; }
+    else if (this._servedCount !== this._lastServed) {
+      this._lastServed = this._servedCount;
+      this._dwell = 1.6; hold = true;
+    }
+    const here = this._pointAt(this._s), ahead = this._pointAt(this._s + 35);
+    let err = ahead.ang - here.ang;
+    while (err > Math.PI) err -= 2 * Math.PI;
+    while (err < -Math.PI) err += 2 * Math.PI;
+    let target = 95 * (1 - 0.8 * Math.min(1, Math.abs(err) / 0.9));
+    target = Math.max(target, 16);
+    const st = this.stops[this.nextStop];
+    if (st) {
+      const d = C[st.ri] - this._s;
+      if (d < 140 && d > -30) target = Math.min(target, 10 + Math.max(d, 0) * 0.5);
+    }
+    if (hold) this.speed = Math.max(0, this.speed - 120 * dt);
+    else if (this.speed < target) this.speed = Math.min(target, this.speed + 68 * dt);
+    else this.speed = Math.max(target, this.speed - 120 * dt);
+    this._s = Math.min(C[R.length - 1], this._s + this.speed * dt);
+    const p = this._pointAt(this._s);
+    this.x = p.x; this.y = p.y;
+    let da = p.ang - this.angle;
+    while (da > Math.PI) da -= 2 * Math.PI;
+    while (da < -Math.PI) da += 2 * Math.PI;
+    this.angle += da * Math.min(1, 7 * dt);
+  }
+
   _step(dt) {
+    if (!this.auto) return this._stepOnce(dt);
+    if (this.paused) { this._hud(); return; }
+    const total = dt * this.autoSpeed;
+    const n = Math.max(1, Math.ceil(total / 0.03));
+    for (let i = 0; i < n && this.running; i++) this._stepOnce(total / n);
+  }
+
+  _stepOnce(dt) {
     this._elapsed += dt;
+    if (this.auto) { this._autoMove(dt); this._validate(dt); this._hud(); return; }
     const k = this.keys;
     const keyThrottle = (k['arrowup'] || k['w'] || k[' ']) ? 1 : 0;
     const keyBrake = (k['arrowdown'] || k['s']) ? 1 : 0;
     const keySteer = ((k['arrowright'] || k['d']) ? 1 : 0) - ((k['arrowleft'] || k['a']) ? 1 : 0);
 
-    if (keyThrottle || keyBrake || keySteer) this.freeLook = false;
+    if (!this.auto && (keyThrottle || keyBrake || keySteer)) this.freeLook = false;
     let throttle = Math.max(keyThrottle, this.mouse.throttle);
     let brake = Math.max(keyBrake, this.mouse.brake);
     let steer = keySteer || this.mouse.steer;
@@ -210,7 +289,8 @@ class DriveSim {
     this.lastDist = near.dist;
 
     // desvío: solo se contabiliza si se mantiene fuera del trazado un rato
-    const off = near.dist > TOL;
+    // en recorrido automático el bus va por el trazado: no hay desvíos (hay tramos del GTFS con puntos muy separados)
+    const off = !this.auto && near.dist > TOL;
     this._offTime = off ? (this._offTime || 0) + dt : 0;
     if (!off && this._devWasOff) {
       this.onMessage?.('good', '✓ Ya estás de vuelta en el recorrido.');
@@ -301,6 +381,7 @@ class DriveSim {
       speed: Math.abs(Math.round(this.speed * 0.42)),   // aprox km/h
       pct,
       offRoute: this._devWasOff,
+      auto: this.auto, paused: this.paused, autoSpeed: this.autoSpeed,
     });
   }
 }
