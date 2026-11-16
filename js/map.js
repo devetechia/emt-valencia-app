@@ -53,7 +53,7 @@ class MapView {
     this.tool = null;             // 'free' | 'poly' | 'move'
     this.traceView = 'both';      // 'both' | 'mine' | 'real'
     this.hideOtherStops = false;
-    this._stroking = false; this._space = false;
+    this._stroking = false; this._space = false; this._drawKey = false;
     this.focus = false;           // modo enfoque (conducción): solo ruta + calles colindantes
     this._corrSrc = null;
     this.dirty = true;
@@ -224,7 +224,7 @@ class MapView {
       c.setPointerCapture(e.pointerId);
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pointers.size === 1) {
-        if (this.tool === 'free' && this.onStroke && e.button === 0 && !this._space) {
+        if ((this.tool === 'free' || this._drawKey) && this.onStroke && e.button === 0 && !this._space) {
           const p = this._local(e), [wx, wy] = this.s2w(p.x, p.y);
           this._stroking = true; this.onStroke('start', wx, wy); drag = null;
           return;
@@ -329,7 +329,7 @@ class MapView {
       if (d < bd) { bd = d; best = s; }
     }
     if (best !== this.hoverStop) { this.hoverStop = best; this.dirty = true; }
-    this.canvas.style.cursor = ((this.tool === 'free' || this.tool === 'poly') && !this._space) ? 'crosshair' : (best ? 'pointer' : 'grab');
+    this.canvas.style.cursor = ((this.tool === 'free' || this.tool === 'poly' || this._drawKey) && !this._space) ? 'crosshair' : (best ? 'pointer' : 'grab');
   }
 
   _click(sx, sy) {

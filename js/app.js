@@ -290,7 +290,7 @@ function wireTrace() {
   const t = state.trace;
   const st = { line: null, variant: null };
   t.hideOtherStops = true;
-  t.tool = 'free';
+  t.tool = 'move';
 
   const nPts = () => (t.trace || []).reduce((a, s) => a + s.pts.length, 0);
   const refresh = () => { $('#trPts').textContent = nPts(); };
@@ -304,6 +304,7 @@ function wireTrace() {
     $$('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === k));
     t.canvas.style.cursor = k === 'move' ? 'grab' : 'crosshair';
   };
+  const idleCursor = () => { t.canvas.style.cursor = (t.tool === 'move' && !t._drawKey) ? 'grab' : 'crosshair'; };
   $$('.tool').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
   $$('.tv').forEach(b => b.addEventListener('click', () => {
     t.traceView = b.dataset.tv;
@@ -345,7 +346,7 @@ function wireTrace() {
       ? [stops[0], stops[stops.length - 1]].map((s, i) => ({ ...s, order: i, served: false }))
       : stops.map((s, i) => ({ ...s, order: i, served: false }));
     t.nextStopOrder = 0;   // la primera parada, resaltada en amarillo
-    t.trace = []; clearResult(); setTool('free');
+    t.trace = []; clearResult(); setTool('move');
     $('#traceSetup').classList.add('hidden'); $('#traceHud').classList.remove('hidden');
     $('#view-trazar').classList.add('focus-ui');
     $('#trLine').textContent = `${l.n} · ${l.name || ''}`;
@@ -358,15 +359,24 @@ function wireTrace() {
     t.dirty = true;
   });
 
+  /** deshace el último tramo: recorta el último trazo hasta la última parada por la que pasó; si no hay, lo quita entero */
   const undo = () => {
     const l = t.trace && t.trace[t.trace.length - 1];
     if (!l) return;
     if (t.traceResult) clearResult();
-    if (l.kind === 'poly' && l.pts.length > 1) l.pts.pop(); else t.trace.pop();
+    if (l.kind === 'poly' && l.pts.length > 1) { l.pts.pop(); t.dirty = true; refresh(); return; }
+    const stops = st.variant ? st.variant.stops : [];
+    const pts = l.pts, end = pts[pts.length - 1];
+    let cut = -1, run = 0;
+    for (let j = pts.length - 2; j >= 1; j--) {
+      run += Math.hypot(pts[j][0] - pts[j + 1][0], pts[j][1] - pts[j + 1][1]);
+      if (run < 40) continue;                      // ignora la parada en la que ya terminaba el trazo
+      if (stops.some(s => Math.hypot(s.x - pts[j][0], s.y - pts[j][1]) <= TRACE_TOL)) { cut = j; break; }
+    }
+    if (cut > 0 && l.kind === 'free') l.pts = pts.slice(0, cut + 1); else t.trace.pop();
     t.dirty = true; refresh();
   };
   $('#traceUndo').addEventListener('click', undo);
-  $('#traceClear').addEventListener('click', () => { t.trace = []; clearResult(); t.dirty = true; refresh(); });
 
   const check = () => {
     if (!st.line) return;
@@ -410,20 +420,25 @@ function wireTrace() {
   };
 
   const active = () => $('#view-trazar').classList.contains('active') && st.line;
+  const clearAll = () => { t.trace = []; clearResult(); t.dirty = true; refresh(); };
+  $('#traceClear').onclick = clearAll;
   window.addEventListener('keydown', e => {
     if (!active()) return;
     if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName)) return;
     const k = e.key.toLowerCase();
-    if (k === ' ') { e.preventDefault(); t._space = true; t.canvas.style.cursor = 'grab'; }
-    else if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); undo(); }
-    else if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) { if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); undo(); } return; }
+    if (k === '1') { e.preventDefault(); if (!t._drawKey) { t._drawKey = true; t.canvas.style.cursor = 'crosshair'; } }
+    else if (k === '2') { e.preventDefault(); if (!e.repeat) undo(); }
+    else if (k === '3') { e.preventDefault(); if (!e.repeat) clearAll(); }
+    else if (k === ' ') { e.preventDefault(); t._space = true; t.canvas.style.cursor = 'grab'; }
     else if (e.key === 'Enter') { e.preventDefault(); check(); }
     else if (e.key === 'Escape') end();
-    else if (k === 'd') setTool('free');
-    else if (k === 'p') setTool('poly');
-    else if (k === 'm') setTool('move');
   });
-  window.addEventListener('keyup', e => { if (e.key === ' ') { t._space = false; if (t.tool) t.canvas.style.cursor = t.tool === 'move' ? 'grab' : 'crosshair'; } });
+  window.addEventListener('keyup', e => {
+    if (e.key === '1') { t._drawKey = false; idleCursor(); }
+    if (e.key === ' ') { t._space = false; idleCursor(); }
+  });
+  window.addEventListener('blur', () => { t._drawKey = false; t._space = false; });
 }
 
 /* ════════ VISTA CONDUCCIÓN ════════ */

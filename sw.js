@@ -1,5 +1,5 @@
 /* Service worker — rutas relativas: funciona igual en local y en GitHub Pages */
-const VERSION = 'emt-val-2026-11-15v';
+const VERSION = 'emt-val-2026-11-15w';
 
 const CORE = [
   './',
@@ -68,7 +68,7 @@ self.addEventListener('fetch', e => {
   //    siempre al desplegar, y sigue funcionando sin conexión)
   if (isData || isCore) {
     e.respondWith(
-      fetch(e.request).then(res => {
+      fetch(e.request, { cache: 'no-cache' }).then(res => {
         if (res && res.ok) {
           const clone = res.clone();
           caches.open(VERSION).then(c => c.put(e.request, clone));
