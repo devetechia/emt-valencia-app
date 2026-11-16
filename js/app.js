@@ -299,6 +299,7 @@ function wireTrace() {
     t.nextStopOrder = -1;
     t.trace = []; clearResult();
     $('#traceSetup').classList.add('hidden'); $('#traceHud').classList.remove('hidden');
+    $('#view-trazar').classList.add('focus-ui');
     $('#trLine').textContent = `${l.n} · ${l.name || ''}`;
     $('#trFrom').textContent = stops[0].name; $('#trTo').textContent = stops[stops.length - 1].name;
     refresh();
@@ -329,12 +330,15 @@ function wireTrace() {
       <div>Tu trazado que va por la ruta: <b>${pp} %</b></div>
       <div class="legend"><span class="lg g"></span> acertaste <span class="lg r"></span> te faltó <span class="lg b"></span> tu trazado</div>
       ${missed}`;
+    toast(`${verdict} · cubres el ${pc} %`, 3500);
+    box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   };
   $('#traceCheck').addEventListener('click', check);
 
   const end = () => {
     st.line = null; t.trace = null; clearResult(); t.overlayStops = [];
     $('#traceHud').classList.add('hidden'); $('#traceSetup').classList.remove('hidden');
+    $('#view-trazar').classList.remove('focus-ui');
     t.dirty = true; t.fit();
   };
   $('#traceEnd').addEventListener('click', end);
@@ -420,6 +424,7 @@ function wireDrive() {
     const vi = +($('#driveVariant').value || 0);
     $('#driveSetup').classList.add('hidden');
     $('#driveHud').classList.remove('hidden');
+    $('#view-conduccion').classList.add('focus-ui');
     $('#driveBanner').classList.add('hidden');
     $('#autoCtl').classList.toggle('hidden', !auto);
     if (d.start(l, vi, { auto })) toast((auto ? 'Recorrido automático · línea ' : 'Conduciendo línea ') + l.n);
@@ -441,6 +446,7 @@ function endDrive() {
   $('#driveHud').classList.add('hidden');
   $('#driveBanner').classList.add('hidden');
   $('#driveMsg').textContent = '';
+  $('#view-conduccion').classList.remove('focus-ui');
 }
 
 /* ════════ VISTA TEST ════════ */
@@ -523,8 +529,8 @@ function wireUI() {
     if (v !== 'conduccion' && state.drive.running) endDrive();
     setTimeout(() => {
       if (v === 'mapa') { state.mapView._resize(); state.mapView.dirty = true; }
-      if (v === 'conduccion') { state.drive.view._resize(); state.drive.view.dirty = true; }
-      if (v === 'trazar') { state.trace._resize(); state.trace.dirty = true; }
+      if (v === 'conduccion') { state.drive.view._resize(); if (!state.drive.running) state.drive.view.fit(); state.drive.view.dirty = true; }
+      if (v === 'trazar') { state.trace._resize(); if (!$('#view-trazar').classList.contains('focus-ui')) state.trace.fit(); state.trace.dirty = true; }
     }, 40);
   }));
 
